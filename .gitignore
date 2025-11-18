@@ -1,4 +1,6 @@
 # Byte-compiled / optimized / DLL files
+.idea/*
+src/quant_signal/models/artifacts/
 __pycache__/
 *.py[codz]
 *$py.class

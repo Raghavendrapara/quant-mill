@@ -1,0 +1,14 @@
+[project]
+name = "quant-signal"
+version = "0.1.0"
+dependencies = [
+    "click",
+    "yfinance",
+    "pandas",
+    "numpy",
+    "scikit-learn",
+    "joblib"
+]
+
+[project.scripts]
+quant-signal = "quant_signal.cli:cli"
