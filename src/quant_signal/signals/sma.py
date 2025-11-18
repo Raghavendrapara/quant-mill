@@ -1,6 +1,32 @@
 import numpy as np
 import pandas as pd
 from quant_signal.features.technical import add_sma_pair
+import matplotlib.pyplot as plt
+
+
+def plot_sma_crossovers(df, symbol, short=50, long=200):
+    """
+    Display a price chart with SMA crossovers, buy/sell markers.
+    """
+    plt.figure(figsize=(12, 6))
+    plt.plot(df["Close"], label="Close Price", linewidth=1)
+    plt.plot(df[f"SMA_{short}"], label=f"SMA {short}", linewidth=1.2)
+    plt.plot(df[f"SMA_{long}"], label=f"SMA {long}", linewidth=1.2)
+
+    # Mark BUY signals
+    buys = df[df["Signal"] == 2]
+    sells = df[df["Signal"] == -2]
+
+    plt.scatter(buys.index, buys["Close"], marker="^", color="green", s=80, label="BUY")
+    plt.scatter(sells.index, sells["Close"], marker="v", color="red", s=80, label="SELL")
+
+    plt.title(f"SMA Crossovers for {symbol}")
+    plt.xlabel("Date")
+    plt.ylabel("Price")
+    plt.legend()
+    plt.grid(True, linestyle="--", alpha=0.4)
+    plt.tight_layout()
+    plt.show()
 
 
 def apply_sma_strategy(df: pd.DataFrame, short=50, long=200):
@@ -69,9 +95,9 @@ def build_long_trades_from_signals(df: pd.DataFrame) -> pd.DataFrame:
     entry_date = None
     entry_price = None
 
-    for date, row in events.sort_index().iterrows():
-        sig = int(row["Signal"])
-        price = float(row["Close"])
+    for date, sig, price in events[["Signal", "Close"]].itertuples(index=True, name=None):
+        sig = int(sig)
+        price = float(price)
 
         # BUY signal
         if sig == 2 and position == 0:

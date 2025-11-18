@@ -5,15 +5,116 @@ from __future__ import annotations
 from typing import List
 
 from quant_signal.config import TICKER_UNIVERSE
-from quant_signal.data.loaders import download_ohlcv
-from quant_signal.signals.sma import apply_sma_strategy, get_last_crossovers, compute_compounded_return
 from quant_signal.signals.ml_signals import generate_ml_signals_for_universe
 from quant_signal.data.loaders import download_ohlcv
 from quant_signal.signals.sma import (
     apply_sma_strategy,
     get_last_crossovers,
     build_long_trades_from_signals,
+    plot_sma_crossovers
 )
+
+
+def run_sma_signals(symbols):
+    if not symbols:
+        print("No symbols selected. Use option 1 to search and add.")
+        return
+
+    while True:
+        print("\n=== SMA Crossover Signals ===")
+        print("Selected symbols:", ", ".join(symbols))
+        print("\nChoose:")
+        print("  1. Check today's SMA signal")
+        print("  2. Show last N crossover events (history + optional PnL)")
+        print("  3. Plot graphical SMA crossover chart")
+        print("  4. Back to main menu\n")
+
+        choice = input("Select option [1-4]: ").strip()
+
+        # ---------------------------
+        # 1. TODAY’S SIGNALS
+        # ---------------------------
+        if choice == "1":
+            print("\n--- Today's SMA Signals ---")
+            for symbol in symbols:
+                df = download_ohlcv(symbol, start="2015-01-01")
+                df = apply_sma_strategy(df)
+
+                sig = df["Signal"].iloc[-1]
+                if sig == 2:
+                    print(f"{symbol}: BUY")
+                elif sig == -2:
+                    print(f"{symbol}: SELL")
+                else:
+                    print(f"{symbol}: No signal today.")
+
+            input("\nPress ENTER to continue...")
+
+        # ---------------------------
+        # 2. HISTORY + PNL
+        # ---------------------------
+        elif choice == "2":
+            try:
+                n = int(input("How many past crossovers to show (e.g., 10)? ").strip())
+            except ValueError:
+                print("Invalid number. Using 5.")
+                n = 5
+
+            print("\n--- Historical Crossovers ---")
+            for symbol in symbols:
+                df = download_ohlcv(symbol, start="2015-01-01")
+                df = apply_sma_strategy(df)
+                hist = get_last_crossovers(df, n)
+
+                print(f"\n{symbol}: Last {n} crossovers")
+                if hist.empty:
+                    print("  No crossovers found.")
+                else:
+                    print(hist)
+
+                # Ask if we should compute PnL
+                ans = input(
+                    f"\nCompute PnL based on last trades for {symbol}? [y/N]: "
+                ).strip().lower()
+                if ans == "y":
+                    trades = build_long_trades_from_signals(df)
+                    if trades.empty:
+                        print("  No completed trades found (no BUY->SELL pairs).")
+                    else:
+                        last_trades = trades.tail(n)
+                        sum_return = last_trades["pct_return"].sum()
+                        comp_return = (1 + last_trades["pct_return"]).prod() - 1
+
+                        print("\n  Last trades:")
+                        print(last_trades)
+
+                        print(f"\n  Total PnL (sum of returns):       {sum_return*100:.2f}%")
+                        print(f"  Total PnL (compounded, real PnL): {comp_return*100:.2f}%")
+
+            input("\nPress ENTER to continue...")
+
+        # ---------------------------
+        # 3. SMA PLOT SECTION
+        # ---------------------------
+        elif choice == "3":
+            print("\n--- SMA Crossover Chart ---")
+            for symbol in symbols:
+                print(f"Plotting for {symbol}...")
+                df = download_ohlcv(symbol, start="2015-01-01")
+                df = apply_sma_strategy(df)
+                plot_sma_crossovers(df, symbol)   # pops up a chart
+
+            input("\nPress ENTER to continue...")
+
+        # ---------------------------
+        # 4. BACK
+        # ---------------------------
+        elif choice == "4":
+            return
+
+        else:
+            print("Invalid choice, try again.")
+
 
 
 
@@ -64,89 +165,6 @@ def search_tickers() -> str | None:
             return chosen
         else:
             print("Number out of range.")
-
-
-def run_sma_signals(symbols):
-    if not symbols:
-        print("No symbols selected. Use option 1 to search and add.")
-        return
-
-    while True:
-        print("\n=== SMA Crossover Signals ===")
-        print("Selected symbols:", ", ".join(symbols))
-        print("\nChoose:")
-        print("  1. Check today's SMA signal")
-        print("  2. Show last N crossover events (history)")
-        print("  3. Back to main menu\n")
-
-        choice = input("Select option [1-3]: ").strip()
-
-        if choice == "1":
-            # --- TODAY'S SIGNALS ---
-            print("\n--- Today's SMA Signals ---")
-            for symbol in symbols:
-                df = download_ohlcv(symbol, start="2015-01-01")
-                df = apply_sma_strategy(df)
-
-                sig = df["Signal"].iloc[-1]
-                if sig == 2:
-                    print(f"{symbol}: BUY")
-                elif sig == -2:
-                    print(f"{symbol}: SELL")
-                else:
-                    print(f"{symbol}: No signal today.")
-
-            input("\nPress ENTER to continue...")
-
-        elif choice == "2":
-            # --- HISTORICAL CROSSOVERS + OPTIONAL PNL ---
-            try:
-                n = int(input("How many past crossovers to show (e.g., 10)? ").strip())
-            except ValueError:
-                print("Invalid number. Using 5.")
-                n = 5
-
-            print("\n--- Historical Crossovers ---")
-            for symbol in symbols:
-                df = download_ohlcv(symbol, start="2015-01-01")
-                df = apply_sma_strategy(df)
-                hist = get_last_crossovers(df, n)
-
-                print(f"\n{symbol}: Last {n} crossovers")
-                if hist.empty:
-                    print("  No crossovers found.")
-                else:
-                    print(hist)
-
-                # Ask if we should compute PnL
-                ans = input(
-                    f"\nCompute PnL based on last trades for {symbol}? [y/N]: "
-                ).strip().lower()
-                if ans == "y":
-                    trades = build_long_trades_from_signals(df)
-                    if trades.empty:
-                        print("  No completed trades found (no BUY->SELL pairs).")
-                    else:
-                        # Use the last k completed trades (k = n/2 approx, but we can just use n)
-                        last_trades = trades.tail(n)
-
-
-                        print("\n  Last trades:")
-                        print(last_trades)
-                        sum_return = last_trades["pct_return"].sum()
-                        comp_return = compute_compounded_return(last_trades)
-
-                        print(f"\n  Total PnL (sum of returns):       {sum_return * 100:.2f}%")
-                        print(f"  Total PnL (compounded, real PnL): {comp_return * 100:.2f}%")
-
-            input("\nPress ENTER to continue...")
-
-        elif choice == "3":
-            return  # back to main menu
-
-        else:
-            print("Invalid choice, try again.")
-
 
 
 
