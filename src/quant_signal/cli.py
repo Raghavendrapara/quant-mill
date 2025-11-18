@@ -2,10 +2,12 @@ import click
 from quant_signal.signals.generator import generate_signals
 from quant_signal.models.train import train_random_forest
 from quant_signal.signals.ml_signals import generate_ml_signals_for_universe
+from quant_signal.interactive import run_shell
 
 
 @click.group()
 def cli():
+    """Quant-Mill command line interface."""
     pass
 
 
@@ -56,3 +58,8 @@ def signals_ml_cmd(symbols, model_path, start, horizon, threshold, prob_cutoff):
         click.echo(df)
         df.to_csv("today_signals_ml.csv", index=False)
         click.echo("Saved to today_signals_ml.csv")
+
+@cli.command("interactive")
+def interactive_cmd():
+    """Start interactive menu-driven session."""
+    run_shell()
