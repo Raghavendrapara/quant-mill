@@ -5,7 +5,8 @@ from __future__ import annotations
 from typing import List
 
 from quant_signal.config import TICKER_UNIVERSE
-from quant_signal.signals.generator import generate_signals
+from quant_signal.data.loaders import download_ohlcv
+from quant_signal.signals.sma import apply_sma_strategy, get_last_crossovers
 from quant_signal.signals.ml_signals import generate_ml_signals_for_universe
 
 
@@ -58,20 +59,64 @@ def search_tickers() -> str | None:
             print("Number out of range.")
 
 
-def run_sma_signals(symbols: List[str]):
+def run_sma_signals(symbols):
     if not symbols:
-        print("No symbols selected yet. Use option 1 to search and add.")
+        print("No symbols selected. Use option 1 to search and add.")
         return
 
-    print("\nRunning SMA crossover signals for:", ", ".join(symbols))
-    df = generate_signals(symbols)
-    if df.empty:
-        print("No SMA signals today.")
-    else:
-        print("\nSignals:")
-        print(df)
-        df.to_csv("today_signals_sma.csv", index=False)
-        print("\nSaved to today_signals_sma.csv")
+    while True:
+        print("\n=== SMA Crossover Signals ===")
+        print("Selected symbols:", ", ".join(symbols))
+        print("\nChoose:")
+        print("  1. Check today's SMA signal")
+        print("  2. Show last N crossover events (history)")
+        print("  3. Back to main menu\n")
+
+        choice = input("Select option [1-3]: ").strip()
+
+        if choice == "1":
+            print("\n--- Today's SMA Signals ---")
+            for symbol in symbols:
+                df = download_ohlcv(symbol, start="2015-01-01")
+                df = apply_sma_strategy(df)
+
+                sig = df["Signal"].iloc[-1]
+                if sig == 2:
+                    print(f"{symbol}: BUY")
+                elif sig == -2:
+                    print(f"{symbol}: SELL")
+                else:
+                    print(f"{symbol}: No signal today.")
+
+            input("\nPress ENTER to continue...")
+
+        elif choice == "2":
+            try:
+                n = int(input("How many past crossovers to show (e.g., 10)? ").strip())
+            except ValueError:
+                print("Invalid number. Using 5.")
+                n = 5
+
+            print("\n--- Historical Crossovers ---")
+            for symbol in symbols:
+                df = download_ohlcv(symbol, start="2015-01-01")
+                df = apply_sma_strategy(df)
+                hist = get_last_crossovers(df, n)
+
+                print(f"\n{symbol}: Last {n} crossovers")
+                if hist.empty:
+                    print("  No crossovers found.")
+                else:
+                    print(hist)
+
+            input("\nPress ENTER to continue...")
+
+        elif choice == "3":
+            return  # go back
+
+        else:
+            print("Invalid choice, try again.")
+
 
 
 def run_ml_signals(symbols: List[str]):

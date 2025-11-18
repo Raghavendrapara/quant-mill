@@ -26,3 +26,21 @@ def last_signal(df: pd.DataFrame):
         return "SELL"
     else:
         return None
+
+def get_last_crossovers(df: pd.DataFrame, n: int = 5) -> pd.DataFrame:
+    """
+    Return the last n SMA crossovers (BUY/SELL) with dates and prices.
+    """
+    events = df[df["Signal"].isin([2, -2])].copy()
+    if events.empty:
+        return events  # empty DF
+
+    events["signal_type"] = np.where(events["Signal"] == 2, "BUY", "SELL")
+    events["price"] = events["Close"]
+
+    # Keep only useful columns
+    events = events[["signal_type", "price"]]
+    events.index.name = "date"
+
+    # Return last n events
+    return events.tail(n)
