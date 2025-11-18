@@ -6,8 +6,15 @@ from typing import List
 
 from quant_signal.config import TICKER_UNIVERSE
 from quant_signal.data.loaders import download_ohlcv
-from quant_signal.signals.sma import apply_sma_strategy, get_last_crossovers
+from quant_signal.signals.sma import apply_sma_strategy, get_last_crossovers, compute_compounded_return
 from quant_signal.signals.ml_signals import generate_ml_signals_for_universe
+from quant_signal.data.loaders import download_ohlcv
+from quant_signal.signals.sma import (
+    apply_sma_strategy,
+    get_last_crossovers,
+    build_long_trades_from_signals,
+)
+
 
 
 def _clear_screen():
@@ -75,6 +82,7 @@ def run_sma_signals(symbols):
         choice = input("Select option [1-3]: ").strip()
 
         if choice == "1":
+            # --- TODAY'S SIGNALS ---
             print("\n--- Today's SMA Signals ---")
             for symbol in symbols:
                 df = download_ohlcv(symbol, start="2015-01-01")
@@ -91,6 +99,7 @@ def run_sma_signals(symbols):
             input("\nPress ENTER to continue...")
 
         elif choice == "2":
+            # --- HISTORICAL CROSSOVERS + OPTIONAL PNL ---
             try:
                 n = int(input("How many past crossovers to show (e.g., 10)? ").strip())
             except ValueError:
@@ -109,13 +118,35 @@ def run_sma_signals(symbols):
                 else:
                     print(hist)
 
+                # Ask if we should compute PnL
+                ans = input(
+                    f"\nCompute PnL based on last trades for {symbol}? [y/N]: "
+                ).strip().lower()
+                if ans == "y":
+                    trades = build_long_trades_from_signals(df)
+                    if trades.empty:
+                        print("  No completed trades found (no BUY->SELL pairs).")
+                    else:
+                        # Use the last k completed trades (k = n/2 approx, but we can just use n)
+                        last_trades = trades.tail(n)
+
+
+                        print("\n  Last trades:")
+                        print(last_trades)
+                        sum_return = last_trades["pct_return"].sum()
+                        comp_return = compute_compounded_return(last_trades)
+
+                        print(f"\n  Total PnL (sum of returns):       {sum_return * 100:.2f}%")
+                        print(f"  Total PnL (compounded, real PnL): {comp_return * 100:.2f}%")
+
             input("\nPress ENTER to continue...")
 
         elif choice == "3":
-            return  # go back
+            return  # back to main menu
 
         else:
             print("Invalid choice, try again.")
+
 
 
 

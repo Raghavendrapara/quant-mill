@@ -44,3 +44,61 @@ def get_last_crossovers(df: pd.DataFrame, n: int = 5) -> pd.DataFrame:
 
     # Return last n events
     return events.tail(n)
+
+def build_long_trades_from_signals(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Build completed long trades from SMA crossover signals.
+
+    Assumptions:
+      - BUY on Signal == 2  (Golden Cross)
+      - SELL on Signal == -2 (Death Cross)
+      - Long-only: we either hold 1 unit or are flat.
+      - Any last open BUY without a later SELL is ignored.
+
+    Returns a DataFrame with:
+      entry_date, exit_date, entry_price, exit_price, pct_return
+    """
+    events = df[df["Signal"].isin([2, -2])].copy()
+    if events.empty:
+        return pd.DataFrame(columns=[
+            "entry_date", "exit_date", "entry_price", "exit_price", "pct_return"
+        ])
+
+    trades = []
+    position = 0  # 0 = flat, 1 = long
+    entry_date = None
+    entry_price = None
+
+    for date, row in events.sort_index().iterrows():
+        sig = int(row["Signal"])
+        price = float(row["Close"])
+
+        # BUY signal
+        if sig == 2 and position == 0:
+            position = 1
+            entry_date = date
+            entry_price = price
+
+        # SELL signal
+        elif sig == -2 and position == 1:
+            exit_date = date
+            exit_price = price
+            pct_return = (exit_price / entry_price) - 1.0
+            trades.append({
+                "entry_date": entry_date,
+                "exit_date": exit_date,
+                "entry_price": entry_price,
+                "exit_price": exit_price,
+                "pct_return": pct_return,
+            })
+            position = 0
+            entry_date = None
+            entry_price = None
+
+    return pd.DataFrame(trades)
+
+def compute_compounded_return(trades: pd.DataFrame) -> float:
+    if trades.empty:
+        return 0.0
+    growth = (1 + trades["pct_return"]).prod()
+    return growth - 1
