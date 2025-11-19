@@ -34,6 +34,8 @@ def download_ohlcv(
       - Uses DataConfig (start/end/interval/auto_adjust/retries)
       - Adds basic retry with exponential backoff
       - Caches results in memory for the current process
+      - Normalises columns so downstream code always sees flat
+        [Open, High, Low, Close, Adj Close, Volume] columns
 
     Args:
         symbol: e.g. "TCS.NS"
@@ -51,7 +53,13 @@ def download_ohlcv(
 
     cfg_key = _make_cache_key(symbol, cfg)
     if cfg_key in _DATA_CACHE:
-        logger.debug("Using cached data for %s (%s -> %s, %s)", symbol, cfg.start, cfg.end, cfg.interval)
+        logger.debug(
+            "Using cached data for %s (start=%s, end=%s, interval=%s)",
+            symbol,
+            cfg.start,
+            cfg.end,
+            cfg.interval,
+        )
         return _DATA_CACHE[cfg_key].copy()
 
     end = cfg.end
@@ -63,8 +71,7 @@ def download_ohlcv(
     for attempt in range(1, cfg.max_retries + 1):
         try:
             logger.info(
-                "Downloading %s data for %s (start=%s, end=%s, interval=%s, auto_adjust=%s) [attempt %d/%d]",
-                "OHLCV",
+                "Downloading OHLCV data for %s (start=%s, end=%s, interval=%s, auto_adjust=%s) [attempt %d/%d]",
                 symbol,
                 cfg.start,
                 end,
@@ -84,10 +91,26 @@ def download_ohlcv(
             )
 
             if df.empty:
-                msg = f"No data returned for symbol={symbol}, start={cfg.start}, end={end}, interval={cfg.interval}"
+                msg = (
+                    f"No data returned for symbol={symbol}, "
+                    f"start={cfg.start}, end={end}, interval={cfg.interval}"
+                )
                 logger.warning(msg)
                 last_exc = RuntimeError(msg)
             else:
+                # --- NEW BIT: normalise columns if MultiIndex ---
+                if isinstance(df.columns, pd.MultiIndex):
+                    # Typical yfinance shape: level 0 = OHLCV, level 1 = ticker
+                    if df.columns.nlevels == 2 and len(df.columns.levels[1]) == 1:
+                        # Single-ticker: drop the ticker level -> 'Open', 'High', ...
+                        df.columns = df.columns.droplevel(1)
+                    else:
+                        # Fallback: join levels with '_' if something weird comes back
+                        df.columns = [
+                            "_".join(str(x) for x in col if str(x) != "")
+                            for col in df.columns.to_list()
+                        ]
+
                 _DATA_CACHE[cfg_key] = df.copy()
                 return df
 
@@ -105,3 +128,4 @@ def download_ohlcv(
     if last_exc is not None:
         raise RuntimeError(f"Failed to download data for {symbol} after {cfg.max_retries} attempts") from last_exc
     raise RuntimeError(f"Failed to download data for {symbol} (unknown error)")
+
