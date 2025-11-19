@@ -1,75 +1,114 @@
+from __future__ import annotations
+
+from dataclasses import asdict
+from typing import Optional
+
 import numpy as np
 import pandas as pd
+
+from quant_signal.config import SMAStrategyConfig, DEFAULT_CONFIG
 from quant_signal.features.technical import add_sma_pair
-import matplotlib.pyplot as plt
+
+# Plotly is optional; import only when needed
+def _lazy_plotly_import():
+    try:
+        import plotly.graph_objects as go
+        return go
+    except ImportError as e:
+        raise RuntimeError(
+            "Plotly is required for plotting. Install it with:\n\n"
+            "    pip install plotly\n"
+        ) from e
+
+# -------------------------------------------------------------------
+# Core SMA strategy logic
+# -------------------------------------------------------------------
 
 
-def plot_sma_crossovers(df, symbol, short=50, long=200):
+def apply_sma_strategy(
+    df: pd.DataFrame,
+    sma_cfg: Optional[SMAStrategyConfig] = None,
+    price_col: str = "Close",
+) -> pd.DataFrame:
     """
-    Display a price chart with SMA crossovers, buy/sell markers.
+    Apply an SMA crossover strategy to a price DataFrame.
+
+    Adds the following columns:
+      - SMA_<short>, SMA_<long>
+      - Position: 1 (long) or -1 (short/flat)
+      - Signal: 2 (BUY), -2 (SELL), 0 (no change)
+
+    This function mutates the DataFrame and returns it for convenience.
     """
-    plt.figure(figsize=(12, 6))
-    plt.plot(df["Close"], label="Close Price", linewidth=1)
-    plt.plot(df[f"SMA_{short}"], label=f"SMA {short}", linewidth=1.2)
-    plt.plot(df[f"SMA_{long}"], label=f"SMA {long}", linewidth=1.2)
+    if sma_cfg is None:
+        sma_cfg = DEFAULT_CONFIG.sma
 
-    # Mark BUY signals
-    buys = df[df["Signal"] == 2]
-    sells = df[df["Signal"] == -2]
+    sma_cfg.validate()
 
-    plt.scatter(buys.index, buys["Close"], marker="^", color="green", s=80, label="BUY")
-    plt.scatter(sells.index, sells["Close"], marker="v", color="red", s=80, label="SELL")
+    if price_col not in df.columns:
+        raise ValueError(f"Column '{price_col}' not found in DataFrame.")
 
-    plt.title(f"SMA Crossovers for {symbol}")
-    plt.xlabel("Date")
-    plt.ylabel("Price")
-    plt.legend()
-    plt.grid(True, linestyle="--", alpha=0.4)
-    plt.tight_layout()
-    plt.show()
+    df = add_sma_pair(df, sma_cfg, price_col=price_col)
 
+    short_col = f"SMA_{sma_cfg.short_window}"
+    long_col = f"SMA_{sma_cfg.long_window}"
 
-def apply_sma_strategy(df: pd.DataFrame, short=50, long=200):
-    df = add_sma_pair(df, short, long)
-    df["Position"] = np.where(df[f"SMA_{short}"] > df[f"SMA_{long}"], 1, -1)
-    df["Signal"] = df["Position"].diff()
+    df["Position"] = np.where(df[short_col] > df[long_col], 1, -1)
+    df["Signal"] = df["Position"].diff().fillna(0)
+
     return df
 
 
-def last_signal(df: pd.DataFrame):
-    signal_val = df["Signal"].iloc[-1]
+def last_signal_label(df: pd.DataFrame) -> Optional[str]:
+    """
+    Interpret the last Signal value as a semantic label.
 
-    # Prevent int(np.nan) crash
+        2  -> 'BUY'
+       -2  -> 'SELL'
+        0  -> None (no crossover on the last bar)
+    """
+    if "Signal" not in df.columns:
+        raise ValueError("DataFrame must have a 'Signal' column. Did you call apply_sma_strategy()?")
+
+    signal_val = df["Signal"].iloc[-1]
     if pd.isna(signal_val):
         return None
 
-    # diff() produces floats like 2.0, so normalize to int
     signal_val = int(signal_val)
 
     if signal_val == 2:
         return "BUY"
-    elif signal_val == -2:
+    if signal_val == -2:
         return "SELL"
-    else:
-        return None
+    return None
+
 
 def get_last_crossovers(df: pd.DataFrame, n: int = 5) -> pd.DataFrame:
     """
-    Return the last n SMA crossovers (BUY/SELL) with dates and prices.
+    Return a small DataFrame containing the last `n` SMA crossovers.
+
+    Requires 'Signal' and 'Close' columns to be present (from apply_sma_strategy).
     """
+    if "Signal" not in df.columns or "Close" not in df.columns:
+        raise ValueError("DataFrame must have 'Signal' and 'Close' columns.")
+
     events = df[df["Signal"].isin([2, -2])].copy()
     if events.empty:
-        return events  # empty DF
+        empty = pd.DataFrame(columns=["signal_type", "price"])
+        empty.index.name = "date"
+        return empty
 
     events["signal_type"] = np.where(events["Signal"] == 2, "BUY", "SELL")
     events["price"] = events["Close"]
-
-    # Keep only useful columns
-    events = events[["signal_type", "price"]]
     events.index.name = "date"
 
-    # Return last n events
-    return events.tail(n)
+    return events[["signal_type", "price"]].tail(n)
+
+
+# -------------------------------------------------------------------
+# Trade & PnL helpers
+# -------------------------------------------------------------------
+
 
 def build_long_trades_from_signals(df: pd.DataFrame) -> pd.DataFrame:
     """
@@ -84,47 +123,178 @@ def build_long_trades_from_signals(df: pd.DataFrame) -> pd.DataFrame:
     Returns a DataFrame with:
       entry_date, exit_date, entry_price, exit_price, pct_return
     """
+    if "Signal" not in df.columns or "Close" not in df.columns:
+        raise ValueError("DataFrame must have 'Signal' and 'Close' columns.")
+
     events = df[df["Signal"].isin([2, -2])].copy()
     if events.empty:
-        return pd.DataFrame(columns=[
-            "entry_date", "exit_date", "entry_price", "exit_price", "pct_return"
-        ])
+        return pd.DataFrame(
+            columns=["entry_date", "exit_date", "entry_price", "exit_price", "pct_return"]
+        )
 
     trades = []
     position = 0  # 0 = flat, 1 = long
     entry_date = None
     entry_price = None
 
+    # Use itertuples to avoid Series -> int/float FutureWarnings
     for date, sig, price in events[["Signal", "Close"]].itertuples(index=True, name=None):
         sig = int(sig)
         price = float(price)
 
-        # BUY signal
+        # BUY
         if sig == 2 and position == 0:
             position = 1
             entry_date = date
             entry_price = price
 
-        # SELL signal
+        # SELL
         elif sig == -2 and position == 1:
             exit_date = date
             exit_price = price
             pct_return = (exit_price / entry_price) - 1.0
-            trades.append({
-                "entry_date": entry_date,
-                "exit_date": exit_date,
-                "entry_price": entry_price,
-                "exit_price": exit_price,
-                "pct_return": pct_return,
-            })
+            trades.append(
+                {
+                    "entry_date": entry_date,
+                    "exit_date": exit_date,
+                    "entry_price": entry_price,
+                    "exit_price": exit_price,
+                    "pct_return": pct_return,
+                }
+            )
             position = 0
             entry_date = None
             entry_price = None
 
     return pd.DataFrame(trades)
 
+
 def compute_compounded_return(trades: pd.DataFrame) -> float:
+    """
+    Compute total compounded return from a series of trades.
+
+    Each trade has pct_return = (exit / entry) - 1.
+    Compounded return is:
+        Π (1 + pct_return_i) - 1
+    """
     if trades.empty:
         return 0.0
-    growth = (1 + trades["pct_return"]).prod()
-    return growth - 1
+
+    growth = (1.0 + trades["pct_return"]).prod()
+    return growth - 1.0
+
+
+# -------------------------------------------------------------------
+# Visualization (interactive Plotly)
+# -------------------------------------------------------------------
+
+
+def plot_sma_crossovers_interactive(
+    df: pd.DataFrame,
+    symbol: str,
+    sma_cfg: Optional[SMAStrategyConfig] = None,
+    price_col: str = "Close",
+    show: bool = True,
+    save_path: Optional[str] = None,
+):
+
+    """
+    Interactive Plotly chart:
+
+      - Candlestick price
+      - SMA short & long
+      - BUY / SELL markers
+
+    This function returns the Plotly Figure object. By default it also
+    calls fig.show(). If save_path is provided, an HTML file is written.
+
+    In a non-interactive / server context, set show=False and use save_path.
+    """
+    go = _lazy_plotly_import()
+
+    if sma_cfg is None:
+        sma_cfg = DEFAULT_CONFIG.sma
+
+    sma_cfg.validate()
+
+    short_col = f"SMA_{sma_cfg.short_window}"
+    long_col = f"SMA_{sma_cfg.long_window}"
+
+    required_cols = {"Open", "High", "Low", price_col, short_col, long_col, "Signal"}
+    missing = required_cols.difference(df.columns)
+    if missing:
+        raise ValueError(
+            f"DataFrame missing required columns for plotting: {missing}. "
+            f"Available: {list(df.columns)}"
+        )
+
+    fig = go.Figure(
+        data=[
+            go.Candlestick(
+                x=df.index,
+                open=df["Open"],
+                high=df["High"],
+                low=df["Low"],
+                close=df[price_col],
+                name="Price",
+            )
+        ]
+    )
+
+    fig.add_trace(
+        go.Scatter(
+            x=df.index,
+            y=df[short_col],
+            name=short_col,
+            mode="lines",
+        )
+    )
+
+    fig.add_trace(
+        go.Scatter(
+            x=df.index,
+            y=df[long_col],
+            name=long_col,
+            mode="lines",
+        )
+    )
+
+    buys = df[df["Signal"] == 2]
+    sells = df[df["Signal"] == -2]
+
+    if not buys.empty:
+        fig.add_trace(
+            go.Scatter(
+                x=buys.index,
+                y=buys[price_col],
+                mode="markers",
+                name="BUY",
+                marker=dict(symbol="triangle-up", size=10),
+            )
+        )
+
+    if not sells.empty:
+        fig.add_trace(
+            go.Scatter(
+                x=sells.index,
+                y=sells[price_col],
+                mode="markers",
+                name="SELL",
+                marker=dict(symbol="triangle-down", size=10),
+            )
+        )
+
+    fig.update_layout(
+        title=f"SMA {sma_cfg.short_window}/{sma_cfg.long_window} Crossovers – {symbol}",
+        xaxis_title="Date",
+        yaxis_title="Price",
+        xaxis_rangeslider_visible=False,
+    )
+
+    if save_path is not None:
+        fig.write_html(save_path)
+
+    if show:
+        fig.show()
+
+    return fig
