@@ -139,9 +139,7 @@ def build_feature_frame(
         df = add_volatility_features(df, windows=sorted(needed_vols), base_return_col="ret_1")
 
     # 3) SMAs (short + long)
-    # Note: MLConfig defaults expect SMA_20 and SMA_50, but strategy config
-    # may define 50/200. That's OK; we can use a separate SMAStrategyConfig
-    # for ML features if desired.
+    
     df = add_sma_pair(df, sma_cfg, price_col=price_col)
 
     # 4) At this point, all required feature columns should exist
