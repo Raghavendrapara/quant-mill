@@ -102,9 +102,6 @@ class MLConfig:
 class AppConfig:
     """
     Top-level configuration aggregating defaults.
-
-    In a larger system this could be loaded from YAML/JSON,
-    environment variables, etc. For now it's in-code.
     """
     data: DataConfig = DataConfig()
     sma: SMAStrategyConfig = SMAStrategyConfig()
