@@ -93,9 +93,6 @@ def build_ml_dataset_for_symbol(
     if ml_cfg is None:
         ml_cfg = DEFAULT_CONFIG.ml
 
-    # if we want ML SMAs to differ from trading SMAs, we can pass a different
-    # SMAStrategyConfig here; for now, we assume they are aligned or feature-
-    # specific config is provided.
     sma_cfg.validate()
     ml_cfg.validate()
 
